@@ -30,7 +30,7 @@ angular.module('uchiwa')
       .when('/', {redirectTo: function () {
         return '/events';
       }})
-      .when('/aggregate/:dc/:check', {templateUrl: 'bower_components/uchiwa-web/partials/views/aggregate.html', reloadOnSearch: false, controller: 'AggregateController'})
+      .when('/aggregates/:dc/:name', {templateUrl: 'bower_components/uchiwa-web/partials/views/aggregate.html', reloadOnSearch: false, controller: 'AggregateController'})
       .when('/aggregates', {templateUrl: 'bower_components/uchiwa-web/partials/views/aggregates.html', reloadOnSearch: false, controller: 'AggregatesController'})
       .when('/checks', {templateUrl: 'bower_components/uchiwa-web/partials/views/checks.html', reloadOnSearch: false, controller: 'ChecksController'})
       .when('/client/:dc/:client', {templateUrl: 'bower_components/uchiwa-web/partials/views/client.html', reloadOnSearch: false, controller: 'ClientController'})
@@ -40,6 +40,8 @@ angular.module('uchiwa')
       .when('/info', {templateUrl: 'bower_components/uchiwa-web/partials/views/info.html', controller: 'InfoController'})
       .when('/login', {templateUrl: 'bower_components/uchiwa-web/partials/login/index.html', controller: 'LoginController'})
       .when('/settings', {templateUrl: 'bower_components/uchiwa-web/partials/views/settings.html', controller: 'SettingsController'})
+      .when('/silenced', {templateUrl: 'bower_components/uchiwa-web/partials/views/silenced.html', reloadOnSearch: false, controller: 'SilencedController'})
+      .when('/silenced/:id*', {templateUrl: 'bower_components/uchiwa-web/partials/views/silenced-entry.html', reloadOnSearch: false, controller: 'SilencedEntryController'})
       .when('/stash/:id*', {templateUrl: 'bower_components/uchiwa-web/partials/views/stash.html', reloadOnSearch: false, controller: 'StashController'})
       .when('/stashes', {templateUrl: 'bower_components/uchiwa-web/partials/views/stashes.html', reloadOnSearch: false, controller: 'StashesController'})
       .otherwise('/');

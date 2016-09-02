@@ -9,43 +9,74 @@ serviceModule.service('backendService', ['audit', 'conf', '$http', '$interval', 
   function(audit, conf, $http, $interval, $location, $rootScope){
     var errorRefresh = conf.appName+' is having trouble updating its data. Try to refresh the page if this issue persists.';
 
-    this.auth = function () {
+    this.getResources = function(id) {
+      var resources = [];
+      var index = id.indexOf('/');
+
+      // Also support silenced ids
+      if (index === -1) {
+        index = id.indexOf(':');
+      }
+
+      resources[0] = id.substr(0, index);
+      resources[1] = id.substr(index + 1);
+
+      return resources;
+    };
+
+    this.auth = function() {
       return $http.get('auth');
     };
-    this.deleteClient = function (id) {
+    this.deleteClient = function(id) {
+      var resources = this.getResources(id);
       if ($rootScope.enterprise) {
         audit.log({action: 'delete_client', level: 'default', output: id});
       }
-      return $http.delete('clients/'+id);
+      return $http.delete('clients/'+resources[1]+'?dc='+resources[0]);
     };
-    this.deleteCheckResult = function (id) {
-      return $http.delete('results/'+id);
+    this.deleteCheckResult = function(id) {
+      var resources = this.getResources(id);
+      return $http.delete('results/'+resources[1]+'?dc='+resources[0]);
     };
-    this.deleteEvent = function (id) {
-      return $http.delete('events/'+id);
+    this.deleteEvent = function(id) {
+      var resources = this.getResources(id);
+      return $http.delete('events/'+resources[1]+'?dc='+resources[0]);
     };
-    this.deleteStash = function (id) {
+    this.deleteSilenced = function(payload) {
+      if ($rootScope.enterprise) {
+        audit.log({action: 'clear_silenced', level: 'default', output: payload.dc + ':' + payload.id});
+      }
+      return $http.post('silenced/clear', payload);
+    };
+    this.deleteStash = function(id) {
+      var resources = this.getResources(id);
       if ($rootScope.enterprise) {
         audit.log({action: 'delete_stash', level: 'default', output: id});
       }
-      return $http.delete('stashes/'+id);
+      return $http.delete('stashes/'+resources[1]+'?dc='+resources[0]);
     };
-    this.getAggregate = function(check, dc, issued) {
-      return $http.get('aggregates/'+dc+'/'+check+'/'+issued);
+    this.getAggregate = function(check, dc) {
+      return $http.get('aggregates/'+check+'?dc='+dc);
+    };
+    this.getAggregateIssued = function(check, dc, issued) {
+      return $http.get('aggregates/'+check+'/'+issued+'?dc='+dc);
     };
     this.getAggregates = function() {
       return $http.get('aggregates');
     };
-    this.getChecks = function () {
+    this.getChecks = function() {
       return $http.get('checks');
     };
-    this.getClient = function (client, dc) {
-      return $http.get('clients/'+dc+'/'+client);
+    this.getClient = function(client, dc) {
+      return $http.get('clients/'+client+'?dc='+dc);
     };
-    this.getClients = function () {
+    this.getClientHistory = function(client, dc) {
+      return $http.get('clients/'+client+'/history?dc='+dc);
+    };
+    this.getClients = function() {
       return $http.get('clients');
     };
-    this.getConfig = function () {
+    this.getConfig = function() {
       if ($location.path().substring(0, 6) === '/login') {
         return;
       }
@@ -107,26 +138,32 @@ serviceModule.service('backendService', ['audit', 'conf', '$http', '$interval', 
             console.error(JSON.stringify(error));
           }
           if (angular.isUndefined($rootScope.metrics)) {
-            $rootScope.metrics = {aggregates: {total: 0}, checks: {total: 0}, clients: {critical: 0, total: 0, unknown: 0, warning: 0}, datacenters: {total: 0}, events: {critical: 0, total: 0, unknown: 0, warning: 0}, stashes: {total: 0}};
+            $rootScope.metrics = {aggregates: {total: 0}, checks: {total: 0}, clients: {critical: 0, total: 0, unknown: 0, warning: 0}, datacenters: {total: 0}, events: {critical: 0, total: 0, unknown: 0, warning: 0}, silenced: {total: 0}, stashes: {total: 0}};
           }
         });
     };
     this.getSEMetrics = function(endpoint) {
       return $http.get('metrics/'+endpoint);
     };
-    this.getStashes = function () {
+    this.getSilenced = function() {
+      return $http.get('silenced');
+    };
+    this.getStashes = function() {
       return $http.get('stashes');
     };
-    this.getSubscriptions = function () {
+    this.getSubscriptions = function() {
       return $http.get('subscriptions');
     };
-    this.login = function (payload) {
+    this.login = function(payload) {
       return $http.post('login', payload);
     };
-    this.postCheckRequest = function (payload) {
+    this.postCheckRequest = function(payload) {
       return $http.post('request', payload);
     };
-    this.postStash = function (payload) {
+    this.postSilenced = function(payload) {
+      return $http.post('silenced', payload);
+    };
+    this.postStash = function(payload) {
       return $http.post('stashes', payload);
     };
   }
@@ -263,6 +300,10 @@ serviceModule.service('routingService', ['$location', function ($location) {
     });
   };
   this.updateValue = function (filters, value, key) {
+    if (key === 'limit' && value === '0') {
+      filters[key] = undefined;
+      return;
+    }
     if (value === '') {
       filters[key] = filtersDefaultValues[key] ? filtersDefaultValues[key] : value;
     }
@@ -270,6 +311,66 @@ serviceModule.service('routingService', ['$location', function ($location) {
       filters[key] = value;
     }
   };
+}]);
+
+/**
+* Silenced
+*/
+serviceModule.service('silencedService', ['backendService', 'conf', '$filter', '$modal', '$rootScope',
+  function (backendService, conf, $filter, $modal, $rootScope) {
+    this.create = function (e, i) {
+      var items = _.isArray(i) ? i : new Array(i);
+      var event = e || window.event;
+      if (angular.isDefined(event)) {
+        event.stopPropagation();
+      }
+
+      if (items.length === 0) {
+        $rootScope.$emit('notification', 'error', 'No items selected');
+      } else {
+        var modalInstance = $modal.open({ // jshint ignore:line
+          templateUrl: $rootScope.partialsPath + '/modals/silenced.html',
+          controller: 'SilencedModalController',
+          resolve: {
+            items: function () {
+              return items;
+            }
+          }
+        });
+      }
+    };
+    this.find = function(items, id) {
+      for (var i = 0, len = items.length; i < len; i++) {
+        if (angular.isObject(items[i]) && angular.isDefined(items[i]._id)) {
+          if (items[i]._id === id) {
+            return items[i];
+          }
+        }
+      }
+      return null;
+    };
+    this.post = function(payload) {
+      return backendService.postSilenced(payload)
+        .success(function () {
+          $rootScope.$emit('notification', 'success', 'The silenced entry has been created.');
+        })
+        .error(function (error) {
+          $rootScope.$emit('notification', 'error', 'The silenced entry was not created.');
+          console.error(error);
+        });
+    };
+    this.delete = function(id) {
+      var resources = backendService.getResources(id);
+      var payload = {dc: resources[0], id: resources[1]};
+      return backendService.deleteSilenced(payload)
+        .success(function () {
+          $rootScope.$emit('notification', 'success', 'The silenced entry has been deleted.');
+        })
+        .error(function (error) {
+          $rootScope.$emit('notification', 'error', 'The silenced entry was not deleted.');
+          console.error(error);
+        });
+    };
 }]);
 
 /**
@@ -283,7 +384,7 @@ serviceModule.service('stashesService', ['backendService', 'conf', '$filter', '$
           $rootScope.$emit('notification', 'success', 'The stash has been deleted.');
         })
         .error(function (error) {
-          $rootScope.$emit('notification', 'error', 'The stash was not created.');
+          $rootScope.$emit('notification', 'error', 'The stash was not deleted.');
           console.error(error);
         });
     };
@@ -354,27 +455,6 @@ serviceModule.service('stashesService', ['backendService', 'conf', '$filter', '$
       }
 
       return path.join('/');
-    };
-    this.stash = function (e, i) {
-      var items = _.isArray(i) ? i : new Array(i);
-      var event = e || window.event;
-      if (angular.isDefined(event)) {
-        event.stopPropagation();
-      }
-
-      if (items.length === 0) {
-        $rootScope.$emit('notification', 'error', 'No items selected');
-      } else {
-        var modalInstance = $modal.open({ // jshint ignore:line
-          templateUrl: $rootScope.partialsPath + '/stash-modal.html',
-          controller: 'StashModalController',
-          resolve: {
-            items: function () {
-              return items;
-            }
-          }
-        });
-      }
     };
     this.submit = function (element, item) {
       var dc = element.dc;

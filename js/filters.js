@@ -19,7 +19,32 @@ filterModule.filter('arrayToString', function() {
 });
 
 filterModule.filter('buildEvents', function() {
+  function estimateLastOk(event) {
+    var check       = event.check,
+        output      = check.output,
+        occurrences = event.occurrences,
+        timestamp   = event.timestamp || check.timestamp,
+        interval    = check.interval,
+        age,
+        match;
+
+    if (interval) {
+      age = occurrences * interval;
+    } else if (check.name === 'keepalive') {
+      match = output && output.match(/\d+/);
+      age = match && parseInt(match);
+    }
+
+    if (isNaN(age) || isNaN(timestamp)) {
+      return;
+    }
+
+    return timestamp - age;
+  }
+
   return function(events) {
+    var lastOk;
+
     if (Object.prototype.toString.call(events) !== '[object Array]') {
       return events;
     }
@@ -35,6 +60,12 @@ filterModule.filter('buildEvents', function() {
         event.check = {};
       }
       event.sourceName = event.check.source || event.client.name;
+      /* jshint -W106  */
+      if (!('last_ok' in event) || event.last_ok === null) {
+        lastOk = estimateLastOk(event);
+        if (lastOk) { event.last_ok = lastOk; }
+      }
+      /* jshint +W106 */
     });
     return events;
   };
@@ -122,15 +153,15 @@ filterModule.filter('getAckClass', function() {
   };
 });
 
-filterModule.filter('getExpireTimestamp', ['conf', function (conf) {
-  return function(stash) {
-    if (angular.isUndefined(stash) || isNaN(stash.expire)) {
+filterModule.filter('getExpirationTimestamp', ['conf', function (conf) {
+  return function(expire) {
+    if (angular.isUndefined(expire) || isNaN(expire)) {
       return 'Unknown';
     }
-    if (stash.expire === -1) {
+    if (expire === -1) {
       return 'Never';
     }
-    var expiration = (moment().unix() + stash.expire) * 1000;
+    var expiration = (moment().unix() + expire) * 1000;
     return moment(expiration).format(conf.date);
   };
 }]);
@@ -211,7 +242,10 @@ filterModule.filter('hideOccurrences', function() {
 
 filterModule.filter('highlight', function() {
   return function(text) {
-    if(typeof text === 'object') {
+    if (typeof text === 'object') {
+      if (text.hasOwnProperty('$$unwrapTrustedValue')) {
+        return text;
+      }
       var code = hljs.highlight('json', angular.toJson(text, true)).value;
       var output = '<pre class=\"hljs\">' + code + '</pre>';
       return output;
@@ -261,7 +295,8 @@ filterModule.filter('richOutput', ['$filter', '$sce', '$sanitize', '$interpolate
       output = text.toString();
     } else if (/^iframe:/.test(text)) {
       var iframeSrc = $sanitize(text.replace(/^iframe:/, ''));
-      output = $sce.trustAsHtml($interpolate('<span class="iframe"><iframe width="100%" src="{{iframeSrc}}"></iframe></span>')({ 'iframeSrc': iframeSrc }));
+      var exp = $interpolate('<span class="iframe"><iframe width="100%" src="{{iframeSrc}}"></iframe></span>')({ 'iframeSrc': iframeSrc });
+      output = $sce.trustAsHtml(exp);
     }
     else {
       var linkified = $filter('linky')(text, '_blank');
